@@ -1,0 +1,59 @@
+name: Test, export and publish
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Godot 4.7.2
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/maths-godot
+            ~/.local/share/godot/export_templates/4.7.2.stable
+          key: godot-4.7.2-web-nothreads-v1
+      - name: Install official Godot and web template
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$HOME/.cache/maths-godot" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/godot.zip" https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$HOME/.cache/maths-godot"
+          chmod +x "$HOME/.cache/maths-godot/Godot_v4.7.2-stable_linux.x86_64"
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/templates.tpz" https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
+          unzip -j -q "$RUNNER_TEMP/templates.tpz" templates/web_nothreads_release.zip templates/version.txt -d "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+      - name: Import, test and export source
+        run: |
+          GODOT="$HOME/.cache/maths-godot/Godot_v4.7.2-stable_linux.x86_64"
+          "$GODOT" --headless --editor --path . --import --quit
+          "$GODOT" --headless --path . --script self_test.gd
+          for test in interaction_test.gd ui_test.gd ui_smoke.gd; do
+            if [ -f "$test" ]; then "$GODOT" --headless --path . --script "$test"; fi
+          done
+          mkdir -p build/web
+          "$GODOT" --headless --path . --export-release Web build/web/index.html
+          touch build/web/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: build/web
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
